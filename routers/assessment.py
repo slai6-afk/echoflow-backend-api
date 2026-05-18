@@ -65,24 +65,26 @@ async def evaluate_pronunciation(
 
 
 async def _transcribe_with_whisper(wav_bytes: bytes) -> str:
-    """Use OpenAI Whisper for accurate transcription before pronunciation scoring."""
+    """Use OpenAI Whisper (async) for accurate transcription before pronunciation scoring."""
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
         return ""
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=api_key)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp.write(wav_bytes)
             tmp_path = tmp.name
         try:
             with open(tmp_path, "rb") as f:
-                result = client.audio.transcriptions.create(
+                result = await client.audio.transcriptions.create(
                     model="whisper-1",
                     file=f,
                     response_format="text",
+                    # Faster response; language hint avoids detection overhead
+                    language="en",
                 )
-            return result.strip()
+            return result.strip() if isinstance(result, str) else result.text.strip()
         finally:
             os.unlink(tmp_path)
     except Exception as e:
@@ -99,7 +101,8 @@ async def analyze_import(
     from services.linguistic_analyzer import LinguisticAnalyzer
 
     audio_bytes = await audio.read()
-    wav_bytes = convert_to_wav(audio_bytes, audio.content_type or "")
+    # Trim to first 5 minutes — keeps latency predictable and Whisper/Azure reliable
+    wav_bytes = convert_to_wav(audio_bytes, audio.content_type or "", max_seconds=300)
 
     # Step 1: Whisper transcription (most accurate — uses actual speech content)
     transcript = await _transcribe_with_whisper(wav_bytes)
